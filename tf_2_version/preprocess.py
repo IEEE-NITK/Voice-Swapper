@@ -2,6 +2,9 @@ import librosa
 import numpy as np
 import os
 import pyworld
+import argparse
+import time
+import pickle
 
 def load_wavs(wav_dir, sr):
 
@@ -36,12 +39,11 @@ def world_encode_spectral_envelop(sp, fs, dim = 24):
 def world_decode_spectral_envelop(coded_sp, fs):
 
     fftlen = pyworld.get_cheaptrick_fft_size(fs)
-    #coded_sp = coded_sp.astype(np.float32)
+    #coded_sp = coded_sp.astype(np.float64)
     #coded_sp = np.ascontiguousarray(coded_sp)
     decoded_sp = pyworld.decode_spectral_envelope(coded_sp, fs, fftlen)
 
     return decoded_sp
-
 
 def world_encode_data(wavs, fs, frame_period = 5.0, coded_dim = 24):
 
@@ -62,14 +64,12 @@ def world_encode_data(wavs, fs, frame_period = 5.0, coded_dim = 24):
 
     return f0s, timeaxes, sps, aps, coded_sps
 
-
 def transpose_in_list(lst):
 
     transposed_lst = list()
     for array in lst:
         transposed_lst.append(array.T)
     return transposed_lst
-
 
 def world_decode_data(coded_sps, fs):
 
@@ -81,16 +81,14 @@ def world_decode_data(coded_sps, fs):
 
     return decoded_sps
 
-
 def world_speech_synthesis(f0, decoded_sp, ap, fs, frame_period):
 
     #decoded_sp = decoded_sp.astype(np.float64)
     wav = pyworld.synthesize(f0, decoded_sp, ap, fs, frame_period)
     # Librosa could not save wav if not doing so
-    wav = wav.astype(np.float32)
+    wav = wav.astype(np.float64)
 
     return wav
-
 
 def world_synthesis_data(f0s, decoded_sps, aps, fs, frame_period):
 
@@ -101,7 +99,6 @@ def world_synthesis_data(f0s, decoded_sps, aps, fs, frame_period):
         wavs.append(wav)
 
     return wavs
-
 
 def coded_sps_normalization_fit_transoform(coded_sps):
 
@@ -155,7 +152,6 @@ def wav_padding(wav, sr, frame_period, multiple = 4):
 
     return wav_padded
 
-
 def logf0_statistics(f0s):
 
     log_f0s_concatenated = np.ma.log(np.concatenate(f0s))
@@ -180,7 +176,6 @@ def wavs_to_specs(wavs, n_fft = 1024, hop_length = None):
 
     return stfts
 
-
 def wavs_to_mfccs(wavs, sr, n_fft = 1024, hop_length = None, n_mels = 128, n_mfcc = 24):
 
     mfccs = list()
@@ -189,7 +184,6 @@ def wavs_to_mfccs(wavs, sr, n_fft = 1024, hop_length = None, n_mels = 128, n_mfc
         mfccs.append(mfcc)
 
     return mfccs
-
 
 def mfccs_normalization(mfccs):
 
@@ -202,7 +196,6 @@ def mfccs_normalization(mfccs):
         mfccs_normalized.append((mfcc - mfccs_mean) / mfccs_std)
     
     return mfccs_normalized, mfccs_mean, mfccs_std
-
 
 def sample_train_data(dataset_A, dataset_B, n_frames = 128):
 
@@ -236,3 +229,75 @@ def sample_train_data(dataset_A, dataset_B, n_frames = 128):
     train_data_B = np.array(train_data_B)
 
     return train_data_A, train_data_B
+
+def save_pickle(variable, fileName):
+    with open(fileName, 'wb') as f:
+        pickle.dump(variable, f)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description = 'Train CycleGAN model for datasets.')
+
+    train_A_dir_default = './data/vcc2016_training/SF1'
+    train_B_dir_default = './data/vcc2016_training/TF2'
+    output_dir_default = './preprocessed/sf1_tf2'
+
+    parser.add_argument('--train_A_dir', type = str, help = 'Directory for A.', default = train_A_dir_default)
+    parser.add_argument('--train_B_dir', type = str, help = 'Directory for B.', default = train_B_dir_default)
+    parser.add_argument('--output_dir', type = str, help = 'Directory for saving preprocessed files.', default = output_dir_default)
+    argv = parser.parse_args()
+
+    train_A_dir = argv.train_A_dir
+    train_B_dir = argv.train_B_dir
+    output_dir = argv.output_dir
+    
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    sampling_rate = 16000
+    num_mcep = 24
+    frame_period = 5.0
+    n_frames = 128
+
+    print('Preprocessing Data...')
+
+    start_time = time.time()
+
+    wavs_A = load_wavs(wav_dir = train_A_dir, sr = sampling_rate)
+    wavs_B = load_wavs(wav_dir = train_B_dir, sr = sampling_rate)
+
+    f0s_A, timeaxes_A, sps_A, aps_A, coded_sps_A = world_encode_data(wavs = wavs_A, fs = sampling_rate, frame_period = frame_period, coded_dim = num_mcep)
+    f0s_B, timeaxes_B, sps_B, aps_B, coded_sps_B = world_encode_data(wavs = wavs_B, fs = sampling_rate, frame_period = frame_period, coded_dim = num_mcep)
+
+    log_f0s_mean_A, log_f0s_std_A = logf0_statistics(f0s_A)
+    log_f0s_mean_B, log_f0s_std_B = logf0_statistics(f0s_B)
+
+    print('Log Pitch A')
+    print('Mean: %f, Std: %f' %(log_f0s_mean_A, log_f0s_std_A))
+    print('Log Pitch B')
+    print('Mean: %f, Std: %f' %(log_f0s_mean_B, log_f0s_std_B))
+
+
+    coded_sps_A_transposed = transpose_in_list(lst = coded_sps_A)
+    coded_sps_B_transposed = transpose_in_list(lst = coded_sps_B)
+
+    coded_sps_A_norm, coded_sps_A_mean, coded_sps_A_std = coded_sps_normalization_fit_transoform(coded_sps = coded_sps_A_transposed)
+    print("Input data fixed.")
+    coded_sps_B_norm, coded_sps_B_mean, coded_sps_B_std = coded_sps_normalization_fit_transoform(coded_sps = coded_sps_B_transposed)
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    np.savez(os.path.join(output_dir, 'logf0s_normalization.npz'), log_f0s_mean_A = log_f0s_mean_A, log_f0s_std_A = log_f0s_std_A, log_f0s_mean_B = log_f0s_mean_B, log_f0s_std_B = log_f0s_std_B)
+    np.savez(os.path.join(output_dir, 'mcep_normalization.npz'), coded_sps_A_mean = coded_sps_A_mean, coded_sps_A_std = coded_sps_A_std, coded_sps_B_mean = coded_sps_B_mean, coded_sps_B_std = coded_sps_B_std)
+    
+    save_pickle(variable=coded_sps_A_norm,
+                fileName=os.path.join(output_dir, "coded_sps_A_norm.pickle"))
+    save_pickle(variable=coded_sps_B_norm,
+                fileName=os.path.join(output_dir, "coded_sps_B_norm.pickle"))
+
+    end_time = time.time()
+    time_elapsed = end_time - start_time
+
+    print('Preprocessing Done.')
+
+    print('Time Elapsed for Data Preprocessing: %02d:%02d:%02d' % (time_elapsed // 3600, (time_elapsed % 3600 // 60), (time_elapsed % 60 // 1)))
+# write list of numpy arrays to file

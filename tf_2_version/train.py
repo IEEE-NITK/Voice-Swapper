@@ -3,12 +3,19 @@ import numpy as np
 import argparse
 import time
 import librosa
+import soundfile as sf
+import math
+import pickle
 
 from preprocess import *
-from model import CycleGAN
+from model import CycleGAN 
 import tensorflow as tf
 
-def train(train_A_dir=None, train_B_dir=None, model_dir=None, model_name=None, random_seed=None, validation_A_dir=None, validation_B_dir=None, output_dir=None, tensorboard_log_dir=None):
+def loadPickleFile(fileName):
+        with open(fileName, 'rb') as f:
+            return pickle.load(f)
+
+def train(train_dir=None, model_dir=None, model_name=None, random_seed=None, validation_A_dir=None, validation_B_dir=None, output_dir=None, tensorboard_log_dir=None,model_weights_dir = None,add_noise=False):
 
     np.random.seed(random_seed)
 
@@ -25,36 +32,13 @@ def train(train_A_dir=None, train_B_dir=None, model_dir=None, model_name=None, r
     lambda_cycle = 10
     lambda_identity = 5
 
-    print('Preprocessing Data...')
+    log_files = np.load(os.path.join(train_dir, 'logf0s_normalization.npz'))
+    log_f0s_mean_A, log_f0s_std_A, log_f0s_mean_B, log_f0s_std_B = log_files['log_f0s_mean_A'],log_files['log_f0s_std_A'],log_files['log_f0s_mean_B'],log_files['log_f0s_std_B']
 
-    start_time = time.time()
-
-    wavs_A = load_wavs(wav_dir = train_A_dir, sr = sampling_rate)
-    wavs_B = load_wavs(wav_dir = train_B_dir, sr = sampling_rate)
-
-    f0s_A, timeaxes_A, sps_A, aps_A, coded_sps_A = world_encode_data(wavs = wavs_A, fs = sampling_rate, frame_period = frame_period, coded_dim = num_mcep)
-    f0s_B, timeaxes_B, sps_B, aps_B, coded_sps_B = world_encode_data(wavs = wavs_B, fs = sampling_rate, frame_period = frame_period, coded_dim = num_mcep)
-
-    log_f0s_mean_A, log_f0s_std_A = logf0_statistics(f0s_A)
-    log_f0s_mean_B, log_f0s_std_B = logf0_statistics(f0s_B)
-
-    print('Log Pitch A')
-    print('Mean: %f, Std: %f' %(log_f0s_mean_A, log_f0s_std_A))
-    print('Log Pitch B')
-    print('Mean: %f, Std: %f' %(log_f0s_mean_B, log_f0s_std_B))
-
-
-    coded_sps_A_transposed = transpose_in_list(lst = coded_sps_A)
-    coded_sps_B_transposed = transpose_in_list(lst = coded_sps_B)
-
-    coded_sps_A_norm, coded_sps_A_mean, coded_sps_A_std = coded_sps_normalization_fit_transoform(coded_sps = coded_sps_A_transposed)
-    print("Input data fixed.")
-    coded_sps_B_norm, coded_sps_B_mean, coded_sps_B_std = coded_sps_normalization_fit_transoform(coded_sps = coded_sps_B_transposed)
-
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
-    np.savez(os.path.join(model_dir, 'logf0s_normalization.npz'), mean_A = log_f0s_mean_A, std_A = log_f0s_std_A, mean_B = log_f0s_mean_B, std_B = log_f0s_std_B)
-    np.savez(os.path.join(model_dir, 'mcep_normalization.npz'), mean_A = coded_sps_A_mean, std_A = coded_sps_A_std, mean_B = coded_sps_B_mean, std_B = coded_sps_B_std)
+    mcep_files = np.load(os.path.join(train_dir, 'mcep_normalization.npz'))
+    coded_sps_A_mean,coded_sps_A_std,coded_sps_B_mean,coded_sps_B_std = mcep_files['coded_sps_A_mean'],mcep_files['coded_sps_A_std'],mcep_files['coded_sps_B_mean'],mcep_files['coded_sps_B_std']
+    
+    coded_sps_A_norm, coded_sps_B_norm = loadPickleFile(os.path.join(train_dir, 'coded_sps_A_norm.pickle')), loadPickleFile(os.path.join(train_dir, 'coded_sps_B_norm.pickle'))
 
     if validation_A_dir is not None:
         validation_A_output_dir = os.path.join(output_dir, 'converted_A')
@@ -66,14 +50,10 @@ def train(train_A_dir=None, train_B_dir=None, model_dir=None, model_name=None, r
         if not os.path.exists(validation_B_output_dir):
             os.makedirs(validation_B_output_dir)
 
-    end_time = time.time()
-    time_elapsed = end_time - start_time
 
-    print('Preprocessing Done.')
-
-    print('Time Elapsed for Data Preprocessing: %02d:%02d:%02d' % (time_elapsed // 3600, (time_elapsed % 3600 // 60), (time_elapsed % 60 // 1)))
-
-    model = CycleGAN(num_features = num_mcep)
+    model = CycleGAN(num_features = num_mcep,num_frames=n_frames,add_noise=add_noise)
+    if model_weights_dir is not None:
+        model.load(model_weights_dir)
 
     for epoch in range(num_epochs):
         
@@ -93,24 +73,24 @@ def train(train_A_dir=None, train_B_dir=None, model_dir=None, model_name=None, r
         n_samples = dataset_A.shape[0]
 
         for i in range(n_samples // mini_batch_size):
-            with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-                num_iterations = n_samples // mini_batch_size * epoch + i
+            num_iterations = n_samples // mini_batch_size * epoch + i
 
-                if num_iterations > 10000:
-                    lambda_identity = 0
-                if num_iterations > 200000:
-                    generator_learning_rate = max(0, generator_learning_rate - generator_learning_rate_decay)
-                    discriminator_learning_rate = max(0, discriminator_learning_rate - discriminator_learning_rate_decay)
+            if num_iterations > 0:
+                lambda_identity = 0
+            if num_iterations > 500:
+                generator_learning_rate = max(0, generator_learning_rate - generator_learning_rate_decay)
+                discriminator_learning_rate = max(0, discriminator_learning_rate - discriminator_learning_rate_decay)
 
-                start = i * mini_batch_size
-                end = (i + 1) * mini_batch_size
-                generator_loss, discriminator_loss = model.forward(input_A_real = dataset_A[start:end], input_B_real = dataset_B[start:end], lambda_cycle = lambda_cycle, lambda_identity = lambda_identity, generator_learning_rate = generator_learning_rate, discriminator_learning_rate = discriminator_learning_rate,gen_tape=gen_tape,disc_tape=disc_tape)
+            start = i * mini_batch_size
+            end = (i + 1) * mini_batch_size
+            generator_loss, discriminator_loss = model.forward_pass(dataset_A[start:end],dataset_B[start:end],lambda_cycle,lambda_identity,generator_learning_rate,discriminator_learning_rate)
 
-                if i % 50 == 0:
-                    #print('Iteration: %d, Generator Loss : %f, Discriminator Loss : %f' % (num_iterations, generator_loss, discriminator_loss))
-                    print('Iteration: {:07d}, Generator Learning Rate: {:.7f}, Discriminator Learning Rate: {:.7f}, Generator Loss : {:.3f}, Discriminator Loss : {:.3f}'.format(num_iterations, generator_learning_rate, discriminator_learning_rate, generator_loss, discriminator_loss))
+            if i % 50 == 0:
+                #print('Iteration: %d, Generator Loss : %f, Discriminator Loss : %f' % (num_iterations, generator_loss, discriminator_loss))
+                print('Iteration: {:07d}, Generator Learning Rate: {:.7f}, Discriminator Learning Rate: {:.7f}, Generator Loss : {:.3f}, Discriminator Loss : {:.3f}'.format(num_iterations, generator_learning_rate, discriminator_learning_rate, generator_loss, discriminator_loss))
 
-        model.save(directory = model_dir, filename = model_name)
+        # model.save(directory = model_dir, filename = model_name)
+        model.save(model_dir,f"{model_name}_epoch{epoch}")
 
         end_time_epoch = time.time()
         time_elapsed_epoch = end_time_epoch - start_time_epoch
@@ -118,61 +98,76 @@ def train(train_A_dir=None, train_B_dir=None, model_dir=None, model_name=None, r
         print('Time Elapsed for This Epoch: %02d:%02d:%02d' % (time_elapsed_epoch // 3600, (time_elapsed_epoch % 3600 // 60), (time_elapsed_epoch % 60 // 1)))
 
         if validation_A_dir is not None:
-            if epoch % 50 == 0:
-                print('Generating Validation Data B from A...')
-                for file in os.listdir(validation_A_dir):
-                    filepath = os.path.join(validation_A_dir, file)
-                    wav, _ = librosa.load(filepath, sr = sampling_rate, mono = True)
-                    wav = wav_padding(wav = wav, sr = sampling_rate, frame_period = frame_period, multiple = 4)
-                    f0, timeaxis, sp, ap = world_decompose(wav = wav, fs = sampling_rate, frame_period = frame_period)
-                    f0_converted = pitch_conversion(f0 = f0, mean_log_src = log_f0s_mean_A, std_log_src = log_f0s_std_A, mean_log_target = log_f0s_mean_B, std_log_target = log_f0s_std_B)
-                    coded_sp = world_encode_spectral_envelop(sp = sp, fs = sampling_rate, dim = num_mcep)
-                    coded_sp_transposed = coded_sp.T
-                    coded_sp_norm = (coded_sp_transposed - coded_sps_A_mean) / coded_sps_A_std
-                    coded_sp_converted_norm = model.test(inputs = np.array([coded_sp_norm]), direction = 'A2B')[0]
-                    coded_sp_converted = coded_sp_converted_norm * coded_sps_B_std + coded_sps_B_mean
-                    coded_sp_converted = coded_sp_converted.T
-                    coded_sp_converted = np.ascontiguousarray(coded_sp_converted)
-                    decoded_sp_converted = world_decode_spectral_envelop(coded_sp = coded_sp_converted, fs = sampling_rate)
-                    wav_transformed = world_speech_synthesis(f0 = f0_converted, decoded_sp = decoded_sp_converted, ap = ap, fs = sampling_rate, frame_period = frame_period)
-                    librosa.output.write_wav(os.path.join(validation_A_output_dir, os.path.basename(file)), wav_transformed, sampling_rate)
+            # if num_iterations % 1000 == 0:
+            print('Generating Validation Data B from A...')
+            for file in os.listdir(validation_A_dir):
+                filepath = os.path.join(validation_A_dir, file)
+                wav, _ = librosa.load(filepath, sr = sampling_rate, mono = True)
+                wav = wav_padding(wav = wav, sr = sampling_rate, frame_period = frame_period, multiple = 4)
+                f0, timeaxis, sp, ap = world_decompose(wav = wav, fs = sampling_rate, frame_period = frame_period)
+                f0_converted = pitch_conversion(f0 = f0, mean_log_src = log_f0s_mean_A, std_log_src = log_f0s_std_A, mean_log_target = log_f0s_mean_B, std_log_target = log_f0s_std_B)
+                coded_sp = world_encode_spectral_envelop(sp = sp, fs = sampling_rate, dim = num_mcep)
+                coded_sp_transposed = coded_sp.T
+                coded_sp_norm = np.array((coded_sp_transposed - coded_sps_A_mean) / coded_sps_A_std)
+                padding = np.zeros((coded_sp_norm.shape[0],n_frames*math.ceil(coded_sp_norm.shape[1]/n_frames) - coded_sp_norm.shape[1]))
+                padded_coded_sp_norm = np.concatenate([coded_sp_norm,padding],axis=1)
+                preds= []
+                for start_frame in range(0,padded_coded_sp_norm.shape[1],n_frames):
+                    preds.append(np.squeeze(model.test(np.expand_dims(padded_coded_sp_norm[:,start_frame:start_frame+n_frames],axis=0), 'A2B').numpy(),axis=0))
+                coded_sp_converted_norm = np.concatenate(preds,axis=1)
+                coded_sp_converted = coded_sp_converted_norm[:,:coded_sp_norm.shape[1]] * coded_sps_B_std + coded_sps_B_mean
+                coded_sp_converted = coded_sp_converted.T
+                coded_sp_converted = np.ascontiguousarray(coded_sp_converted)
+                decoded_sp_converted = world_decode_spectral_envelop(coded_sp = coded_sp_converted, fs = sampling_rate)
+                wav_transformed = world_speech_synthesis(f0 = f0_converted, decoded_sp = decoded_sp_converted, ap = ap, fs = sampling_rate, frame_period = frame_period)
+                # librosa.output.write_wav(os.path.join(validation_A_output_dir, os.path.basename(file)), wav_transformed, sampling_rate)
+                sf.write(os.path.join(validation_A_output_dir, os.path.basename(file)), wav_transformed, sampling_rate, 'PCM_24')
+            model.save(model_dir,f"{model_name}_epoch{epoch}")
+
 
         if validation_B_dir is not None:
-            if epoch % 50 == 0:
-                print('Generating Validation Data A from B...')
-                for file in os.listdir(validation_B_dir):
-                    filepath = os.path.join(validation_B_dir, file)
-                    wav, _ = librosa.load(filepath, sr = sampling_rate, mono = True)
-                    wav = wav_padding(wav = wav, sr = sampling_rate, frame_period = frame_period, multiple = 4)
-                    f0, timeaxis, sp, ap = world_decompose(wav = wav, fs = sampling_rate, frame_period = frame_period)
-                    f0_converted = pitch_conversion(f0 = f0, mean_log_src = log_f0s_mean_B, std_log_src = log_f0s_std_B, mean_log_target = log_f0s_mean_A, std_log_target = log_f0s_std_A)
-                    coded_sp = world_encode_spectral_envelop(sp = sp, fs = sampling_rate, dim = num_mcep)
-                    coded_sp_transposed = coded_sp.T
-                    coded_sp_norm = (coded_sp_transposed - coded_sps_B_mean) / coded_sps_B_std
-                    coded_sp_converted_norm = model.test(inputs = np.array([coded_sp_norm]), direction = 'B2A')[0]
-                    coded_sp_converted = coded_sp_converted_norm * coded_sps_A_std + coded_sps_A_mean
-                    coded_sp_converted = coded_sp_converted.T
-                    coded_sp_converted = np.ascontiguousarray(coded_sp_converted)
-                    decoded_sp_converted = world_decode_spectral_envelop(coded_sp = coded_sp_converted, fs = sampling_rate)
-                    wav_transformed = world_speech_synthesis(f0 = f0_converted, decoded_sp = decoded_sp_converted, ap = ap, fs = sampling_rate, frame_period = frame_period)
-                    librosa.output.write_wav(os.path.join(validation_B_output_dir, os.path.basename(file)), wav_transformed, sampling_rate)
+            # if num_iterations % 1000 == 0:
+            print('Generating Validation Data A from B...')
+            for file in os.listdir(validation_B_dir):
+                filepath = os.path.join(validation_B_dir, file)
+                wav, _ = librosa.load(filepath, sr = sampling_rate, mono = True)
+                wav = wav_padding(wav = wav, sr = sampling_rate, frame_period = frame_period, multiple = 4)
+                f0, timeaxis, sp, ap = world_decompose(wav = wav, fs = sampling_rate, frame_period = frame_period)
+                f0_converted = pitch_conversion(f0 = f0, mean_log_src = log_f0s_mean_B, std_log_src = log_f0s_std_B, mean_log_target = log_f0s_mean_A, std_log_target = log_f0s_std_A)
+                coded_sp = world_encode_spectral_envelop(sp = sp, fs = sampling_rate, dim = num_mcep)
+                coded_sp_transposed = coded_sp.T
+                coded_sp_norm = np.array((coded_sp_transposed - coded_sps_B_mean) / coded_sps_B_std)
+                padding = np.zeros((coded_sp_norm.shape[0],n_frames*math.ceil(coded_sp_norm.shape[1]/n_frames) - coded_sp_norm.shape[1]))
+                padded_coded_sp_norm = np.concatenate([coded_sp_norm,padding],axis=1)
+                preds= []
+                for start_frame in range(0,padded_coded_sp_norm.shape[1],n_frames):
+                    preds.append(np.squeeze(model.test(np.expand_dims(padded_coded_sp_norm[:,start_frame:start_frame+n_frames],axis=0), 'B2A').numpy(),axis=0))
+                coded_sp_converted_norm = np.concatenate(preds,axis=1)
+                coded_sp_converted = coded_sp_converted_norm[:,:coded_sp_norm.shape[1]] * coded_sps_A_std + coded_sps_A_mean
+                coded_sp_converted = coded_sp_converted.T
+                coded_sp_converted = np.ascontiguousarray(coded_sp_converted)
+                decoded_sp_converted = world_decode_spectral_envelop(coded_sp = coded_sp_converted, fs = sampling_rate)
+                wav_transformed = world_speech_synthesis(f0 = f0_converted, decoded_sp = decoded_sp_converted, ap = ap, fs = sampling_rate, frame_period = frame_period)
+                sf.write(os.path.join(validation_B_output_dir, os.path.basename(file)), wav_transformed, sampling_rate, 'PCM_24')
+            model.save(model_dir,f"{model_name}_epoch{epoch}")
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description = 'Train CycleGAN model for datasets.')
 
-    train_A_dir_default = './data/vcc2016_training/SF1'
-    train_B_dir_default = './data/vcc2016_training/TF2'
+    preprocessed_dir_default = './data/vcc2016_training/SF1'
     model_dir_default = './model/sf1_tf2'
     model_name_default = 'sf1_tf2.ckpt'
     random_seed_default = 0
     validation_A_dir_default = './data/evaluation_all/SF1'
-    validation_B_dir_default = './data/evaluation_all/TF2'
+    # validation_B_dir_default = './data/evaluation_all/TF2'
+    validation_B_dir_default = None
     output_dir_default = './validation_output'
+    # output_dir_default = './tf_2_version'
     tensorboard_log_dir_default = './log'
+    load_model_weights = 'None'
 
-    parser.add_argument('--train_A_dir', type = str, help = 'Directory for A.', default = train_A_dir_default)
-    parser.add_argument('--train_B_dir', type = str, help = 'Directory for B.', default = train_B_dir_default)
+    parser.add_argument('--preprocessed_dir', type = str, help = 'Directory for preprocessed dataset.', default = preprocessed_dir_default)
     parser.add_argument('--model_dir', type = str, help = 'Directory for saving models.', default = model_dir_default)
     parser.add_argument('--model_name', type = str, help = 'File name for saving model.', default = model_name_default)
     parser.add_argument('--random_seed', type = int, help = 'Random seed for model training.', default = random_seed_default)
@@ -180,17 +175,19 @@ if __name__ == '__main__':
     parser.add_argument('--validation_B_dir', type = str, help = 'Convert validation B after each training epoch. If set none, no conversion would be done during the training.', default = validation_B_dir_default)
     parser.add_argument('--output_dir', type = str, help = 'Output directory for converted validation voices.', default = output_dir_default)
     parser.add_argument('--tensorboard_log_dir', type = str, help = 'TensorBoard log directory.', default = tensorboard_log_dir_default)
-
+    parser.add_argument('--load_model',type= str,  help = 'Load weights from this directory', default = load_model_weights)
+    parser.add_argument('--add_noise',type= bool,  help = 'Load weights from this directory', default = False)
     argv = parser.parse_args()
 
-    train_A_dir = argv.train_A_dir
-    train_B_dir = argv.train_B_dir
-    model_dir = argv.model_dir
+    preprocessed_dir = argv.preprocessed_dir
+    output_dir = argv.model_dir
     model_name = argv.model_name
     random_seed = argv.random_seed
     validation_A_dir = None if argv.validation_A_dir == 'None' or argv.validation_A_dir == 'none' else argv.validation_A_dir
     validation_B_dir = None if argv.validation_B_dir == 'None' or argv.validation_B_dir == 'none' else argv.validation_B_dir
     output_dir = argv.output_dir
     tensorboard_log_dir = argv.tensorboard_log_dir
+    load_model_weights = None if argv.load_model == 'None' or argv.load_model == 'none' else argv.load_model
+    add_noise = argv.add_noise
 
-    train(train_A_dir = train_A_dir, train_B_dir = train_B_dir, model_dir = model_dir, model_name = model_name, random_seed = random_seed, validation_A_dir = validation_A_dir, validation_B_dir = validation_B_dir, output_dir = output_dir, tensorboard_log_dir = tensorboard_log_dir)
+    train(train_dir = preprocessed_dir, model_dir = output_dir, model_name = model_name, random_seed = random_seed, validation_A_dir = validation_A_dir, validation_B_dir = validation_B_dir, output_dir = output_dir, tensorboard_log_dir = tensorboard_log_dir, model_weights_dir = load_model_weights,add_noise=add_noise)
