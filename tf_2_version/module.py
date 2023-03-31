@@ -1,5 +1,5 @@
 import tensorflow as tf 
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 
 
 class Generator:
@@ -38,13 +38,13 @@ class Generator:
         activation_fn = None, 
         name = None):
 
-        # instance_norm_layer = tf.keras.layers.LayerNormalization(
-            # epsilon = epsilon)
-        instance_norm_layer = tfa.layers.InstanceNormalization(axis=1, 
-                                   center=True, 
-                                   scale=True,
-                                   beta_initializer="random_uniform",
-                                   gamma_initializer="random_uniform")
+        instance_norm_layer = tf.keras.layers.LayerNormalization(
+            epsilon = epsilon)
+        # instance_norm_layer = tfa.layers.InstanceNormalization(axis=1, 
+                                #    center=True, 
+                                #    scale=True,
+                                #    beta_initializer="random_uniform",
+                                #    gamma_initializer="random_uniform")
         self.layers.append(instance_norm_layer)
         # yet to add activation layer
         return instance_norm_layer
@@ -256,9 +256,11 @@ class Discriminator:
         h2 = self.downsample2d_block(inputs=h1_glu,filters = 256, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block1_')
         h3 = self.downsample2d_block(inputs=h2,filters = 512, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block2_')
         h4 = self.downsample2d_block(inputs=h3,filters = 1024, kernel_size = (6, 3), strides = (1, 2), name_prefix = 'downsample2d_block3_')
+        h5 = self.downsample2d_block(inputs=h4,filters = 512, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block4_')
+        h6 = self.downsample2d_block(inputs=h5,filters = 256, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block5_')
 
         # Output
-        o1 = tf.keras.layers.Dense(1, activation = tf.keras.activations.sigmoid)(h4)
+        o1 = tf.keras.layers.Dense(1, activation = tf.keras.activations.sigmoid)(h6)
         
         model = tf.keras.models.Model(inputs=input_layer,outputs=o1)
         self.prev_model[scope_name] = model
@@ -276,5 +278,6 @@ if __name__=="__main__":
 
     disc = Discriminator()
     model = disc.build_discriminator(input_shape=example_input.shape,inputs=fake)
+    model.summary()
     print("Discriminator output shape:",model(fake).get_shape().as_list())
     # tf.input in tensorflow 2.0

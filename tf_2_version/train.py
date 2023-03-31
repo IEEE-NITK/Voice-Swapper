@@ -73,11 +73,11 @@ def train(train_dir=None, model_dir=None, model_name=None, random_seed=None, val
         n_samples = dataset_A.shape[0]
 
         for i in range(n_samples // mini_batch_size):
-            num_iterations = n_samples // mini_batch_size * epoch + i
+            num_iterations = (n_samples // mini_batch_size) * epoch + i
 
-            if num_iterations > 0:
+            if num_iterations > 10e3:
                 lambda_identity = 0
-            if num_iterations > 500:
+            if num_iterations > 2*1e5:
                 generator_learning_rate = max(0, generator_learning_rate - generator_learning_rate_decay)
                 discriminator_learning_rate = max(0, discriminator_learning_rate - discriminator_learning_rate_decay)
 
