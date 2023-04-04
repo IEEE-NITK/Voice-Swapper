@@ -75,9 +75,9 @@ def train(train_dir=None, model_dir=None, model_name=None, random_seed=None, val
         for i in range(n_samples // mini_batch_size):
             num_iterations = (n_samples // mini_batch_size) * epoch + i
 
-            if num_iterations > 10e3:
+            if num_iterations > 5000:
                 lambda_identity = 0
-            if num_iterations > 2*1e5:
+            if num_iterations > 2*1e4:
                 generator_learning_rate = max(0, generator_learning_rate - generator_learning_rate_decay)
                 discriminator_learning_rate = max(0, discriminator_learning_rate - discriminator_learning_rate_decay)
 
@@ -90,7 +90,9 @@ def train(train_dir=None, model_dir=None, model_name=None, random_seed=None, val
                 print('Iteration: {:07d}, Generator Learning Rate: {:.7f}, Discriminator Learning Rate: {:.7f}, Generator Loss : {:.3f}, Discriminator Loss : {:.3f}'.format(num_iterations, generator_learning_rate, discriminator_learning_rate, generator_loss, discriminator_loss))
 
         # model.save(directory = model_dir, filename = model_name)
-        model.save(model_dir,f"{model_name}_epoch{epoch}")
+        if epoch%5==0:
+            print("Saving model...")
+            model.save(model_dir,f"{model_name}_epoch{epoch}")
 
         end_time_epoch = time.time()
         time_elapsed_epoch = end_time_epoch - start_time_epoch
@@ -98,31 +100,31 @@ def train(train_dir=None, model_dir=None, model_name=None, random_seed=None, val
         print('Time Elapsed for This Epoch: %02d:%02d:%02d' % (time_elapsed_epoch // 3600, (time_elapsed_epoch % 3600 // 60), (time_elapsed_epoch % 60 // 1)))
 
         if validation_A_dir is not None:
-            # if num_iterations % 1000 == 0:
-            print('Generating Validation Data B from A...')
-            for file in os.listdir(validation_A_dir):
-                filepath = os.path.join(validation_A_dir, file)
-                wav, _ = librosa.load(filepath, sr = sampling_rate, mono = True)
-                wav = wav_padding(wav = wav, sr = sampling_rate, frame_period = frame_period, multiple = 4)
-                f0, timeaxis, sp, ap = world_decompose(wav = wav, fs = sampling_rate, frame_period = frame_period)
-                f0_converted = pitch_conversion(f0 = f0, mean_log_src = log_f0s_mean_A, std_log_src = log_f0s_std_A, mean_log_target = log_f0s_mean_B, std_log_target = log_f0s_std_B)
-                coded_sp = world_encode_spectral_envelop(sp = sp, fs = sampling_rate, dim = num_mcep)
-                coded_sp_transposed = coded_sp.T
-                coded_sp_norm = np.array((coded_sp_transposed - coded_sps_A_mean) / coded_sps_A_std)
-                padding = np.zeros((coded_sp_norm.shape[0],n_frames*math.ceil(coded_sp_norm.shape[1]/n_frames) - coded_sp_norm.shape[1]))
-                padded_coded_sp_norm = np.concatenate([coded_sp_norm,padding],axis=1)
-                preds= []
-                for start_frame in range(0,padded_coded_sp_norm.shape[1],n_frames):
-                    preds.append(np.squeeze(model.test(np.expand_dims(padded_coded_sp_norm[:,start_frame:start_frame+n_frames],axis=0), 'A2B').numpy(),axis=0))
-                coded_sp_converted_norm = np.concatenate(preds,axis=1)
-                coded_sp_converted = coded_sp_converted_norm[:,:coded_sp_norm.shape[1]] * coded_sps_B_std + coded_sps_B_mean
-                coded_sp_converted = coded_sp_converted.T
-                coded_sp_converted = np.ascontiguousarray(coded_sp_converted)
-                decoded_sp_converted = world_decode_spectral_envelop(coded_sp = coded_sp_converted, fs = sampling_rate)
-                wav_transformed = world_speech_synthesis(f0 = f0_converted, decoded_sp = decoded_sp_converted, ap = ap, fs = sampling_rate, frame_period = frame_period)
-                # librosa.output.write_wav(os.path.join(validation_A_output_dir, os.path.basename(file)), wav_transformed, sampling_rate)
-                sf.write(os.path.join(validation_A_output_dir, os.path.basename(file)), wav_transformed, sampling_rate, 'PCM_24')
-            model.save(model_dir,f"{model_name}_epoch{epoch}")
+            if num_iterations % 1000 == 0:
+                print('Generating Validation Data B from A...')
+                for file in os.listdir(validation_A_dir):
+                    filepath = os.path.join(validation_A_dir, file)
+                    wav, _ = librosa.load(filepath, sr = sampling_rate, mono = True)
+                    wav = wav_padding(wav = wav, sr = sampling_rate, frame_period = frame_period, multiple = 4)
+                    f0, timeaxis, sp, ap = world_decompose(wav = wav, fs = sampling_rate, frame_period = frame_period)
+                    f0_converted = pitch_conversion(f0 = f0, mean_log_src = log_f0s_mean_A, std_log_src = log_f0s_std_A, mean_log_target = log_f0s_mean_B, std_log_target = log_f0s_std_B)
+                    coded_sp = world_encode_spectral_envelop(sp = sp, fs = sampling_rate, dim = num_mcep)
+                    coded_sp_transposed = coded_sp.T
+                    coded_sp_norm = np.array((coded_sp_transposed - coded_sps_A_mean) / coded_sps_A_std)
+                    padding = np.zeros((coded_sp_norm.shape[0],n_frames*math.ceil(coded_sp_norm.shape[1]/n_frames) - coded_sp_norm.shape[1]))
+                    padded_coded_sp_norm = np.concatenate([coded_sp_norm,padding],axis=1)
+                    preds= []
+                    for start_frame in range(0,padded_coded_sp_norm.shape[1],n_frames):
+                        preds.append(np.squeeze(model.test(np.expand_dims(padded_coded_sp_norm[:,start_frame:start_frame+n_frames],axis=0), 'A2B').numpy(),axis=0))
+                    coded_sp_converted_norm = np.concatenate(preds,axis=1)
+                    coded_sp_converted = coded_sp_converted_norm[:,:coded_sp_norm.shape[1]] * coded_sps_B_std + coded_sps_B_mean
+                    coded_sp_converted = coded_sp_converted.T
+                    coded_sp_converted = np.ascontiguousarray(coded_sp_converted)
+                    decoded_sp_converted = world_decode_spectral_envelop(coded_sp = coded_sp_converted, fs = sampling_rate)
+                    wav_transformed = world_speech_synthesis(f0 = f0_converted, decoded_sp = decoded_sp_converted, ap = ap, fs = sampling_rate, frame_period = frame_period)
+                    # librosa.output.write_wav(os.path.join(validation_A_output_dir, os.path.basename(file)), wav_transformed, sampling_rate)
+                    sf.write(os.path.join(validation_A_output_dir, os.path.basename(file)), wav_transformed, sampling_rate, 'PCM_24')
+                model.save(model_dir,f"{model_name}_epoch{epoch}")
 
 
         if validation_B_dir is not None:

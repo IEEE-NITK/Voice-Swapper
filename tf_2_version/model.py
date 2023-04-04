@@ -90,7 +90,7 @@ class CycleGAN(object):
             self.cycle_loss = l1_loss(A_real,self.cycle_A) + l1_loss(B_real,self.cycle_B)
             # Identity loss
             self.identity_loss = l1_loss(A_real,self.generation_A_identity) + l1_loss(B_real,self.generation_B_identity)
-            
+            # implement adversarial loss used in cyclegan-vc in tensorflow
             # Generator loss
             # Generator wants to fool discriminator
             self.generator_loss_A2B = l2_loss(tf.ones_like(self.discrimination_B_fake),self.discrimination_B_fake)

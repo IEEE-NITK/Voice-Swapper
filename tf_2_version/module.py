@@ -1,5 +1,5 @@
 import tensorflow as tf 
-# import tensorflow_addons as tfa
+import tensorflow_addons as tfa
 
 
 class Generator:
@@ -38,13 +38,13 @@ class Generator:
         activation_fn = None, 
         name = None):
 
-        instance_norm_layer = tf.keras.layers.LayerNormalization(
-            epsilon = epsilon)
-        # instance_norm_layer = tfa.layers.InstanceNormalization(axis=1, 
-                                #    center=True, 
-                                #    scale=True,
-                                #    beta_initializer="random_uniform",
-                                #    gamma_initializer="random_uniform")
+        # instance_norm_layer = tf.keras.layers.LayerNormalization(
+            # epsilon = epsilon)
+        instance_norm_layer = tfa.layers.InstanceNormalization(axis=1, 
+                                   center=True, 
+                                   scale=True,
+                                   beta_initializer="random_uniform",
+                                   gamma_initializer="random_uniform")
         self.layers.append(instance_norm_layer)
         # yet to add activation layer
         return instance_norm_layer
@@ -146,7 +146,6 @@ class Generator:
         input_layer = tf.keras.layers.Input(shape=input_shape[1:],batch_size=input_shape[0],dtype=tf.dtypes.float64)
         permuted_input = tf.keras.layers.Permute((2, 1), name = 'input_transpose')(input_layer)
         h1=self.conv1d_layer(filters=128, kernel_size=15, strides=1,name='h1_conv')(permuted_input)
-
         h1_gates = self.conv1d_layer(filters=128, kernel_size=15, strides=1,name='h1_conv_gates')(h1)
         h1_glu = self.gated_linear_layer(inputs=h1,gates=h1_gates,name='h1_glu')
         
@@ -256,11 +255,9 @@ class Discriminator:
         h2 = self.downsample2d_block(inputs=h1_glu,filters = 256, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block1_')
         h3 = self.downsample2d_block(inputs=h2,filters = 512, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block2_')
         h4 = self.downsample2d_block(inputs=h3,filters = 1024, kernel_size = (6, 3), strides = (1, 2), name_prefix = 'downsample2d_block3_')
-        h5 = self.downsample2d_block(inputs=h4,filters = 512, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block4_')
-        h6 = self.downsample2d_block(inputs=h5,filters = 256, kernel_size = (3, 3), strides = (2, 2), name_prefix = 'downsample2d_block5_')
 
         # Output
-        o1 = tf.keras.layers.Dense(1, activation = tf.keras.activations.sigmoid)(h6)
+        o1 = tf.keras.layers.Dense(1, activation = tf.keras.activations.sigmoid)(h4)
         
         model = tf.keras.models.Model(inputs=input_layer,outputs=o1)
         self.prev_model[scope_name] = model
