@@ -78,8 +78,10 @@ Use the `README.md` to get started.
 
 <!-- Objectives -->
 ## Objectives
-
-To build the generative adversarial network model from scratch. To implement these models on a NVIDIA Jetson. To perform voice swapping (conversion) in real-time.
+To be the first to implement [CycleGAN](http://www.kecl.ntt.co.jp/people/kaneko.takuhiro/projects/cyclegan-vc/) in Tensorflow 2.0 (*NO* existing implementation of the same)   
+To train the CycleGAN model on the "Trump" and "Peter Griffin" datasets.  
+To implement these models on a web application.  
+To perform voice swapping(conversion) in real-time.  
 
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -88,8 +90,9 @@ To build the generative adversarial network model from scratch. To implement the
 
 <!-- Scope -->
 ## Scope
+If time permits, we aim to propose a novel model based on the survey/summary of model performances in VCC2016 and write a research 
+paper based on its performance compared to the existing models.  
 
-If time permits, we aim to propose a novel model based on the survey/summary of model performances in VCC2020 and write a research paper based on its performance compared to the existing models.
 
 Click [here](https://docs.google.com/document/d/1yTXpZWsHaKSjoWy35lg43YfADTnA-_4a/edit) for the complete proposal.
 
